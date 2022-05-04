@@ -14,12 +14,7 @@ from src.utils import AllReduce
 logger = getLogger()
 
 
-def init_msn_loss(
-    num_views=1,
-    tau=0.1,
-    me_max=True,
-    return_preds=False
-):
+def init_msn_loss(num_views=1, tau=0.1, me_max=True, return_preds=False):
     """
     Make unsupervised MSN loss
 
@@ -31,12 +26,12 @@ def init_msn_loss(
     softmax = torch.nn.Softmax(dim=1)
 
     def sharpen(p, T):
-        sharp_p = p**(1./T)
+        sharp_p = p ** (1.0 / T)
         sharp_p /= torch.sum(sharp_p, dim=1, keepdim=True)
         return sharp_p
 
     def snn(query, supports, support_labels, temp=tau):
-        """ Soft Nearest Neighbours similarity classifier """
+        """Soft Nearest Neighbours similarity classifier"""
         query = torch.nn.functional.normalize(query)
         supports = torch.nn.functional.normalize(supports)
         return softmax(query @ supports.T / temp) @ support_labels
@@ -50,7 +45,7 @@ def init_msn_loss(
         use_entropy=False,
         use_sinkhorn=False,
         sharpen=sharpen,
-        snn=snn
+        snn=snn,
     ):
         # Step 1: compute anchor predictions
         probs = snn(anchor_views, prototypes, proto_labels)
@@ -63,24 +58,26 @@ def init_msn_loss(
             targets = torch.cat([targets for _ in range(num_views)], dim=0)
 
         # Step 3: compute cross-entropy loss H(targets, queries)
-        loss = torch.mean(torch.sum(torch.log(probs**(-targets)), dim=1))
+        loss = torch.mean(torch.sum(torch.log(probs ** (-targets)), dim=1))
 
         # Step 4: compute me-max regularizer
-        rloss = 0.
+        rloss = 0.0
         if me_max:
             avg_probs = AllReduce.apply(torch.mean(probs, dim=0))
-            rloss = - torch.sum(torch.log(avg_probs**(-avg_probs))) + math.log(float(len(avg_probs)))
+            rloss = -torch.sum(torch.log(avg_probs ** (-avg_probs))) + math.log(
+                float(len(avg_probs))
+            )
 
-        sloss = 0.
+        sloss = 0.0
         if use_entropy:
-            sloss = torch.mean(torch.sum(torch.log(probs**(-probs)), dim=1))
+            sloss = torch.mean(torch.sum(torch.log(probs ** (-probs)), dim=1))
 
         # -- logging
         with torch.no_grad():
             num_ps = float(len(set(targets.argmax(dim=1).tolist())))
             max_t = targets.max(dim=1).values.mean()
             min_t = targets.min(dim=1).values.mean()
-            log_dct = {'np': num_ps, 'max_t': max_t, 'min_t': min_t}
+            log_dct = {"np": num_ps, "max_t": max_t, "min_t": min_t}
 
         if return_preds:
             return loss, rloss, sloss, log_dct, targets
@@ -92,9 +89,12 @@ def init_msn_loss(
 
 @torch.no_grad()
 def distributed_sinkhorn(Q, num_itr=3, use_dist=True):
-    _got_dist = use_dist and torch.distributed.is_available() \
-        and torch.distributed.is_initialized() \
+    _got_dist = (
+        use_dist
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
         and (torch.distributed.get_world_size() > 1)
+    )
 
     if _got_dist:
         world_size = torch.distributed.get_world_size()
