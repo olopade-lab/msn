@@ -26,7 +26,6 @@ from collections import OrderedDict
 import numpy as np
 
 import torch
-import torch.multiprocessing as mp
 
 import src.deit as deit
 from src.utils import (
@@ -47,10 +46,8 @@ from maicara.data.chimec import ChiMECMSNDataset
 from torch.nn.parallel import DistributedDataParallel
 
 
-# --
 log_timings = True
 log_freq = 10
-# --
 
 _GLOBAL_SEED = 0
 np.random.seed(_GLOBAL_SEED)
@@ -62,20 +59,14 @@ logger = logging.getLogger()
 
 
 def main(args):
-
-    # ----------------------------------------------------------------------- #
-    #  PASSED IN PARAMS FROM CONFIG FILE
-    # ----------------------------------------------------------------------- #
-
     # -- META
     model_name = args["meta"]["model_name"]
-    two_layer = False if "two_layer" not in args["meta"] else args["meta"]["two_layer"]
-    bottleneck = 1 if "bottleneck" not in args["meta"] else args["meta"]["bottleneck"]
+    two_layer = args["meta"].get("two_layer", False)
+    bottleneck = args["meta"].get("bottleneck", 1)
     output_dim = args["meta"]["output_dim"]
     hidden_dim = args["meta"]["hidden_dim"]
     load_model = args["meta"]["load_checkpoint"]
     r_file = args["meta"]["read_checkpoint"]
-    copy_data = args["meta"]["copy_data"]
     use_pred_head = args["meta"]["use_pred_head"]
     use_bn = args["meta"]["use_bn"]
     drop_path_rate = args["meta"]["drop_path_rate"]
@@ -85,27 +76,14 @@ def main(args):
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
 
-    # -- CRITERTION
-    memax_weight = (
-        1
-        if "memax_weight" not in args["criterion"]
-        else args["criterion"]["memax_weight"]
-    )
-    ent_weight = (
-        1 if "ent_weight" not in args["criterion"] else args["criterion"]["ent_weight"]
-    )
-    freeze_proto = (
-        False
-        if "freeze_proto" not in args["criterion"]
-        else args["criterion"]["freeze_proto"]
-    )
-    use_ent = (
-        False if "use_ent" not in args["criterion"] else args["criterion"]["use_ent"]
-    )
+    # -- CRITERION
+    memax_weight = args["criterion"].get("memax_weight", 1)
+    ent_weight = args["criterion"].get("end_weight", 1)
+    freeze_proto = args["criterion"].get("freeze_proto", False)
+    use_ent = args["criterion"].get("use_ent", False)
     reg = args["criterion"]["me_max"]
     use_sinkhorn = args["criterion"]["use_sinkhorn"]
     num_proto = args["criterion"]["num_proto"]
-    # --
     batch_size = args["criterion"]["batch_size"]
     temperature = args["criterion"]["temperature"]
     _start_T = args["criterion"]["start_sharpen"]
@@ -113,19 +91,15 @@ def main(args):
 
     # -- DATA
     label_smoothing = args["data"]["label_smoothing"]
-    pin_mem = False if "pin_mem" not in args["data"] else args["data"]["pin_mem"]
-    num_workers = (
-        1 if "num_workers" not in args["data"] else args["data"]["num_workers"]
-    )
+    pin_mem = args["data"].get("pin_mem", False)
+    num_workers = args["data"].get("num_workers", 1)
     color_jitter = args["data"]["color_jitter_strength"]
-    root_path = args["data"]["root_path"]
-    image_folder = args["data"]["image_folder"]
     patch_drop = args["data"]["patch_drop"]
     rand_size = args["data"]["rand_size"]
+    image_size = args["data"]["image_size"]
     rand_views = args["data"]["rand_views"]
     focal_views = args["data"]["focal_views"]
     focal_size = args["data"]["focal_size"]
-    # --
 
     # -- OPTIMIZATION
     clip_grad = args["optimization"]["clip_grad"]
@@ -139,32 +113,31 @@ def main(args):
 
     # -- LOGGING
     folder = args["logging"]["folder"]
-    tag = args["logging"]["write_tag"]
-    # ----------------------------------------------------------------------- #
+    tag = args["logging"]["tag"]
+    fh = logging.FileHandler(os.path.join(folder, tag, "train.log"))
+    fh.setLevel(logging.DEBUG)
+    # create console handler with a higher log level
+    # ch = logging.StreamHandler()
+    # ch.setLevel(logging.ERROR)
+    # create formatter and add it to the handlers
+    # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # fh.setFormatter(formatter)
+    # ch.setFormatter(formatter)
+    # add the handlers to the logger
+    logger.addHandler(fh)
 
-    try:
-        mp.set_start_method("spawn")
-    except Exception:
-        pass
-
-    # -- init torch distributed backend
     world_size, rank = init_distributed()
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
-    # if rank > 0:
-    #     logger.setLevel(logging.ERROR)
 
-    # -- proto details
     assert num_proto > 0, "unsupervised pre-training requires specifying prototypes"
 
-    # -- log/checkpointing paths
-    log_file = os.path.join(folder, f"{tag}_r{rank}.csv")
-    save_path = os.path.join(folder, f"{tag}" + "-ep{epoch}.pth.tar")
-    latest_path = os.path.join(folder, f"{tag}-latest.pth.tar")
+    log_file = os.path.join(folder, tag, f"r{rank}.csv")
+    save_path = os.path.join(folder, tag, "ep{epoch}.pth.tar")
+    latest_path = os.path.join(folder, tag, f"latest.pth.tar")
     load_path = None
     if load_model:
         load_path = os.path.join(folder, r_file) if r_file is not None else latest_path
 
-    # -- make csv_logger
     csv_logger = CSVLogger(
         log_file,
         ("%d", "epoch"),
@@ -192,7 +165,6 @@ def main(args):
         encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(encoder)
         target_encoder = torch.nn.SyncBatchNorm.convert_sync_batchnorm(target_encoder)
 
-    # -- init losses
     msn = init_msn_loss(
         num_views=focal_views + rand_views,
         tau=temperature,
@@ -208,7 +180,6 @@ def main(args):
             (len(targets), num_classes), off_value, device=device
         ).scatter_(1, targets, on_value)
 
-    # -- make data transforms
     transform = make_transforms(
         rand_size=rand_size,
         focal_size=focal_size,
@@ -233,7 +204,6 @@ def main(args):
     ipe = len(unsupervised_loader)
     logger.info(f"iterations per epoch: {ipe}")
 
-    # -- make prototypes
     prototypes, proto_labels = None, None
     if num_proto > 0:
         with torch.no_grad():
@@ -285,7 +255,6 @@ def main(args):
     )
 
     start_epoch = 0
-    # -- load training checkpoint
     if load_model:
         encoder, target_encoder, prototypes, optimizer, start_epoch = load_checkpoint(
             device=device,
@@ -344,7 +313,6 @@ def main(args):
         for itr, udata in enumerate(unsupervised_loader):
 
             def load_imgs():
-                # -- unsupervised imgs
                 imgs = [u.to(device, non_blocking=True) for u in udata]
                 return imgs
 
@@ -369,7 +337,6 @@ def main(args):
 
                 # Step 2. determine anchor views/supports and their
                 #         corresponding target views/supports
-                # --
                 anchor_views, target_views = z, h.detach()
                 T = next(sharpen_scheduler)
 
@@ -444,7 +411,7 @@ def main(args):
                         os.unlink(p)
                     save_checkpoint(epoch)
 
-            # -- Logging
+            # -- logging
             def log_stats():
                 csv_logger.log(epoch + 1, itr, ploss, rloss, eloss, etime)
                 if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
