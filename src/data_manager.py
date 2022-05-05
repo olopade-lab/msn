@@ -16,6 +16,7 @@ from PIL import ImageFilter
 import torch
 import torchvision.transforms as transforms
 import torchvision
+from maicara.data.constants import CHIMEC_MEAN, CHIMEC_STD
 
 _GLOBAL_SEED = 0
 logger = getLogger()
@@ -71,15 +72,13 @@ def make_transforms(
     rand_views=2,
     focal_views=10,
 ):
-    logger.info("making imagenet data transforms")
+    logger.info("making data transforms")
 
     def get_color_distortion(s=1.0):
         # s is the strength of color distortion.
         color_jitter = transforms.ColorJitter(0.8 * s, 0.8 * s, 0.8 * s, 0.2 * s)
         rnd_color_jitter = transforms.RandomApply([color_jitter], p=0.8)
-        rnd_gray = transforms.RandomGrayscale(p=0.2)
-        color_distort = transforms.Compose([rnd_color_jitter, rnd_gray])
-        return color_distort
+        return rnd_color_jitter
 
     rand_transform = transforms.Compose(
         [
@@ -88,7 +87,7 @@ def make_transforms(
             get_color_distortion(s=color_jitter),
             GaussianBlur(p=0.5),
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=(CHIMEC_MEAN,), std=(CHIMEC_STD,)),
         ]
     )
     focal_transform = transforms.Compose(
@@ -98,7 +97,7 @@ def make_transforms(
             get_color_distortion(s=color_jitter),
             GaussianBlur(p=0.5),
             transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            transforms.Normalize(mean=(CHIMEC_MEAN,), std=(CHIMEC_STD,)),
         ]
     )
 

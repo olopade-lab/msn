@@ -40,9 +40,11 @@ from src.utils import (
     AverageMeter,
 )
 from src.losses import init_msn_loss
-from src.data_manager import init_data, make_transforms
+from src.data_manager import make_transforms
 
+from maicara.data.chimec import ChiMECMSNDataset
 from torch.nn.parallel import DistributedDataParallel
+
 
 # --
 log_timings = True
@@ -216,18 +218,18 @@ def main(args):
         color_jitter=color_jitter,
     )
 
-    # -- init data-loaders/samplers
-    (unsupervised_loader, unsupervised_sampler) = init_data(
-        transform=transform,
+    # TODO add open diagnostic datasets
+    dataset = ChiMECMSNDataset(transform, image_size=image_size, prescale=1.0)
+    unsupervised_sampler = torch.utils.data.distributed.DistributedSampler(
+        dataset=dataset, num_replicas=world_size, rank=rank
+    )
+    unsupervised_loader = torch.utils.data.DataLoader(
+        dataset,
+        sampler=unsupervised_sampler,
         batch_size=batch_size,
-        pin_mem=pin_mem,
+        drop_last=True,
+        pin_memory=pin_mem,
         num_workers=num_workers,
-        world_size=world_size,
-        rank=rank,
-        root_path=root_path,
-        image_folder=image_folder,
-        training=True,
-        copy_data=copy_data,
     )
     ipe = len(unsupervised_loader)
     logger.info(f"iterations per epoch: {ipe}")
@@ -344,7 +346,7 @@ def main(args):
         time_meter = AverageMeter()
         data_meter = AverageMeter()
 
-        for itr, (udata, _) in enumerate(unsupervised_loader):
+        for itr, udata in enumerate(unsupervised_loader):
 
             def load_imgs():
                 # -- unsupervised imgs

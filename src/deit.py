@@ -575,7 +575,7 @@ def deit_small_convstem(patch_size=16, **kwargs):
     return model
 
 
-def deit_base_p8(patch_size=8, **kwargs):
+def vit_base_p8(patch_size=8, **kwargs):
     model = VisionTransformer(
         patch_size=patch_size,
         embed_dim=768,
@@ -584,6 +584,7 @@ def deit_base_p8(patch_size=8, **kwargs):
         mlp_ratio=4,
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        in_chans=1,
         **kwargs
     )
     return model
@@ -645,7 +646,7 @@ def deit_large_p7(patch_size=7, **kwargs):
     return model
 
 
-def deit_large_p8(patch_size=8, **kwargs):
+def vit_large_p8(patch_size=8, **kwargs):
     model = VisionTransformer(
         patch_size=patch_size,
         embed_dim=1024,
@@ -654,6 +655,7 @@ def deit_large_p8(patch_size=8, **kwargs):
         mlp_ratio=4,
         qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        in_chans=1,
         **kwargs
     )
     return model
