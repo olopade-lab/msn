@@ -420,35 +420,31 @@ def main(args):
                         "(np: %.1f, max-t: %.3f) "
                         "[wd: %.2e] [lr: %.2e] "
                         "[mem: %.2e] "
-                        "(%d ms; %d ms)"
-                        % (
-                            epoch + 1,
-                            itr,
-                            loss_meter.avg,
-                            ploss_meter.avg,
-                            rloss_meter.avg,
-                            eloss_meter.avg,
-                            np_meter.avg,
-                            maxp_meter.avg,
-                            _new_wd,
-                            _new_lr,
-                            torch.cuda.max_memory_allocated() / 1024.0**2,
-                            time_meter.avg,
-                            data_meter.avg,
-                        )
+                        "(%d ms; %d ms)",
+                        epoch + 1,
+                        itr,
+                        loss_meter.avg,
+                        ploss_meter.avg,
+                        rloss_meter.avg,
+                        eloss_meter.avg,
+                        np_meter.avg,
+                        maxp_meter.avg,
+                        _new_wd,
+                        _new_lr,
+                        torch.cuda.max_memory_allocated() / 1024.0**2,
+                        time_meter.avg,
+                        data_meter.avg,
                     )
 
                     if grad_stats is not None:
                         logger.info(
-                            "[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)"
-                            % (
-                                epoch + 1,
-                                itr,
-                                grad_stats.first_layer,
-                                grad_stats.last_layer,
-                                grad_stats.min,
-                                grad_stats.max,
-                            )
+                            "[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)",
+                            epoch + 1,
+                            itr,
+                            grad_stats.first_layer,
+                            grad_stats.last_layer,
+                            grad_stats.min,
+                            grad_stats.max,
                         )
 
             log_stats()
