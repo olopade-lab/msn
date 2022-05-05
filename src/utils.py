@@ -6,6 +6,7 @@
 #
 
 import os
+import socket
 import math
 import torch
 import torch.distributed as dist
@@ -33,7 +34,20 @@ def gpu_timer(closure, log_timings=True):
     return result, elapsed_time
 
 
-def init_distributed(port=40111, rank_and_world_size=(None, None)):
+def get_unused_local_port():
+    """
+    Borrowed from: https://github.com/Valloric/YouCompleteMe
+    """
+    sock = socket.socket()
+    # This tells the OS to give us any free port in the range [1024 - 65535]
+    sock.bind(("", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    return port
+
+
+def init_distributed(port=None, rank=None, world_size=None):
 
     if dist.is_available() and dist.is_initialized():
         return dist.get_world_size(), dist.get_rank()

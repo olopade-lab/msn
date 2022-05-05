@@ -18,11 +18,14 @@ import yaml
 
 from src.msn_train import main as msn
 
-from src.utils import init_distributed
+from src.utils import init_distributed, get_unused_local_port
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--fname", type=str, help="name of config file to load", default="configs.yaml"
+)
+parser.add_argument(
+    "--port", type=int, help="port to connect to main process", default=None
 )
 parser.add_argument(
     "--devices",
@@ -33,7 +36,7 @@ parser.add_argument(
 )
 
 
-def process_main(rank, fname, world_size, devices):
+def process_main(rank, fname, world_size, devices, port):
     import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(devices[rank].split(":")[-1])
@@ -56,7 +59,7 @@ def process_main(rank, fname, world_size, devices):
         logger.info("loaded params...")
         logger.info(pformat(params))
 
-    world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
+    world_size, rank = init_distributed(port=port, rank=rank, world_size=world_size)
     logger.info(f"Running... (rank: {rank}/{world_size})")
 
     if rank == 0:
@@ -77,6 +80,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.devices is None:
         args.devices = [f"cuda:{i}" for i in torch.cuda.device_count()]
+    if args.port is None:
+        args.port = get_unused_local_port()
 
     num_gpus = len(args.devices)
-    mp.spawn(process_main, nprocs=num_gpus, args=(args.fname, num_gpus, args.devices))
+    mp.spawn(
+        process_main,
+        nprocs=num_gpus,
+        args=(args.fname, num_gpus, args.devices, args.port),
+    )
