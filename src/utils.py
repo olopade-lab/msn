@@ -52,7 +52,6 @@ def init_distributed(port=None, rank=None, world_size=None):
     if dist.is_available() and dist.is_initialized():
         return dist.get_world_size(), dist.get_rank()
 
-    rank, world_size = rank_and_world_size
     os.environ["MASTER_ADDR"] = "localhost"
 
     if (rank is None) or (world_size is None):

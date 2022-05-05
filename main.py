@@ -16,8 +16,6 @@ from pprint import pformat
 import yaml
 
 
-from src.msn_train import main as msn
-
 from src.utils import init_distributed, get_unused_local_port
 
 parser = argparse.ArgumentParser()
@@ -40,6 +38,7 @@ def process_main(rank, fname, world_size, devices, port):
     import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = str(devices[rank].split(":")[-1])
+    from src.msn_train import main as msn
 
     import logging
 
