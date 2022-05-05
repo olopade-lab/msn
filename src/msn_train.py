@@ -65,8 +65,7 @@ def main(args):
     bottleneck = args["meta"].get("bottleneck", 1)
     output_dim = args["meta"]["output_dim"]
     hidden_dim = args["meta"]["hidden_dim"]
-    load_model = args["meta"]["load_checkpoint"]
-    r_file = args["meta"]["read_checkpoint"]
+    resume_from_checkpoint = args["meta"].get("resume_from_checkpoint")
     use_pred_head = args["meta"]["use_pred_head"]
     use_bn = args["meta"]["use_bn"]
     drop_path_rate = args["meta"]["drop_path_rate"]
@@ -135,8 +134,6 @@ def main(args):
     save_path = os.path.join(folder, tag, "ep{epoch}.pth.tar")
     latest_path = os.path.join(folder, tag, f"latest.pth.tar")
     load_path = None
-    if load_model:
-        load_path = os.path.join(folder, r_file) if r_file is not None else latest_path
 
     csv_logger = CSVLogger(
         log_file,
@@ -255,11 +252,11 @@ def main(args):
     )
 
     start_epoch = 0
-    if load_model:
+    if resume_from_checkpoint:
         encoder, target_encoder, prototypes, optimizer, start_epoch = load_checkpoint(
             device=device,
             prototypes=prototypes,
-            r_path=load_path,
+            r_path=resume_from_checkpoint,
             encoder=encoder,
             target_encoder=target_encoder,
             opt=optimizer,
