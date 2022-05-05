@@ -6,6 +6,8 @@
 #
 
 import argparse
+from pathlib import Path
+from maicara.preprocessing.utils import log_code_state
 
 import torch
 import torch.multiprocessing as mp
@@ -54,12 +56,19 @@ def process_main(rank, fname, world_size, devices):
         logger.info("loaded params...")
         logger.info(pformat(params))
 
-    dump = os.path.join(params["logging"]["folder"], "params-msn-train.yaml")
-    with open(dump, "w") as f:
-        yaml.dump(params, f)
-
     world_size, rank = init_distributed(rank_and_world_size=(rank, world_size))
     logger.info(f"Running... (rank: {rank}/{world_size})")
+
+    if rank == 0:
+        dump = os.path.join(
+            params["logging"]["folder"],
+            params["logging"]["tag"],
+            "params-msn-train.yaml",
+        )
+        Path(os.path.dirname(dump)).mkdir(parents=True, exist_ok=True)
+        with open(dump, "w+") as f:
+            yaml.dump(params, f)
+        log_code_state(os.path.dirname(dump))
 
     return msn(params)
 
