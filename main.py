@@ -10,7 +10,7 @@ import argparse
 import torch
 import torch.multiprocessing as mp
 
-import pprint
+from pprint import pformat
 import yaml
 
 
@@ -52,8 +52,7 @@ def process_main(rank, fname, world_size, devices):
     with open(fname, "r") as y_file:
         params = yaml.load(y_file, Loader=yaml.FullLoader)
         logger.info("loaded params...")
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(params)
+        logger.info(pformat(params))
 
     dump = os.path.join(params["logging"]["folder"], "params-msn-train.yaml")
     with open(dump, "w") as f:
