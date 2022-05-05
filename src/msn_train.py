@@ -6,6 +6,7 @@
 #
 
 import os
+from glob import glob
 
 # -- FOR DISTRIBUTED TRAINING ENSURE ONLY 1 DEVICE VISIBLE PER PROCESS
 try:
@@ -49,8 +50,6 @@ from torch.nn.parallel import DistributedDataParallel
 # --
 log_timings = True
 log_freq = 10
-checkpoint_freq = 25
-checkpoint_freq_itr = 2500
 # --
 
 _GLOBAL_SEED = 0
@@ -323,14 +322,10 @@ def main(args):
         }
         if rank == 0:
             torch.save(save_dict, latest_path)
-            if (
-                (epoch + 1) % checkpoint_freq == 0
-                or (epoch + 1) % 10 == 0
-                and epoch < checkpoint_freq
-            ):
-                torch.save(save_dict, save_path.format(epoch=f"{epoch + 1}"))
+            torch.save(save_dict, save_path.format(epoch=f"{epoch + 1}"))
 
     # -- TRAINING LOOP
+    min_loss = torch.inf
     for epoch in range(start_epoch, num_epochs):
         logger.info("Epoch %d" % (epoch + 1))
 
@@ -441,9 +436,13 @@ def main(args):
 
             time_meter.update(etime)
 
-            # -- Save Checkpoint
-            if itr % checkpoint_freq_itr == 0:
-                save_checkpoint(epoch)
+            # -- save checkpoint
+            if loss < min_loss:
+                min_loss = loss
+                if rank == 0:
+                    for p in glob(os.path.join(folder, tag, "*.pth.tar")):
+                        os.unlink(p)
+                    save_checkpoint(epoch)
 
             # -- Logging
             def log_stats():
@@ -488,9 +487,7 @@ def main(args):
             log_stats()
             assert not np.isnan(loss), "loss is nan"
 
-        # -- Save Checkpoint after every epoch
-        logger.info("avg. loss %.3f" % loss_meter.avg)
-        save_checkpoint(epoch + 1)
+        logger.info("avg. loss %.3f", loss_meter.avg)
 
 
 def load_checkpoint(device, r_path, prototypes, encoder, target_encoder, opt):
