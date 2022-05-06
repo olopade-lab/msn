@@ -35,9 +35,9 @@ from src.utils import (
     init_distributed,
     WarmupCosineSchedule,
     CosineWDSchedule,
-    CSVLogger,
     grad_logger,
-    AverageMeter,
+    SmoothedValue,
+    MetricLogger,
 )
 from src.losses import init_msn_loss
 from src.data_manager import make_transforms
@@ -129,22 +129,9 @@ def main(args):
 
     assert num_proto > 0, "unsupervised pre-training requires specifying prototypes"
 
-    log_file = os.path.join(folder, tag, f"r{rank}.csv")
     save_path = os.path.join(folder, tag, "ep{epoch}.pth.tar")
-    latest_path = os.path.join(folder, tag, f"latest.pth.tar")
-    load_path = None
+    latest_path = os.path.join(folder, tag, "latest.pth.tar")
 
-    csv_logger = CSVLogger(
-        log_file,
-        ("%d", "epoch"),
-        ("%d", "itr"),
-        ("%.5f", "msn"),
-        ("%.5f", "me_max"),
-        ("%.5f", "ent"),
-        ("%d", "time (ms)"),
-    )
-
-    # -- init model
     encoder = init_model(
         device=device,
         model_name=model_name,
@@ -279,7 +266,7 @@ def main(args):
             "prototypes": prototypes.data,
             "target_encoder": target_encoder_state_dict,
             "epoch": epoch,
-            "loss": loss_meter.avg,
+            "loss": metric_logger.loss.avg,
             "batch_size": batch_size,
             "world_size": world_size,
             "lr": lr,
@@ -293,111 +280,100 @@ def main(args):
     min_loss = torch.inf
     for epoch in range(start_epoch, num_epochs):
         logger.info("Epoch %d" % (epoch + 1))
-
-        # -- update distributed-data-loader epoch
         unsupervised_sampler.set_epoch(epoch)
 
-        loss_meter = AverageMeter()
-        ploss_meter = AverageMeter()
-        rloss_meter = AverageMeter()
-        eloss_meter = AverageMeter()
-        np_meter = AverageMeter()
-        maxp_meter = AverageMeter()
-        time_meter = AverageMeter()
-        data_meter = AverageMeter()
+        metric_logger = MetricLogger(delimiter="  ")
+        header = "Epoch: [{}]".format(epoch)
+        print_freq = 20
+        metric_logger.add_meter("loss", SmoothedValue(window_size=1, fmt="{value:.3f}"))
+        metric_logger.add_meter(
+            "ploss", SmoothedValue(window_size=1, fmt="{value:.3f}")
+        )
+        metric_logger.add_meter(
+            "rloss", SmoothedValue(window_size=1, fmt="{value:.3f}")
+        )
+        metric_logger.add_meter(
+            "eloss", SmoothedValue(window_size=1, fmt="{value:.3f}")
+        )
+        metric_logger.add_meter("np", SmoothedValue(window_size=1, fmt="{value:.1f}"))
+        metric_logger.add_meter(
+            "me_max", SmoothedValue(window_size=1, fmt="{value:.3f}")
+        )
+        metric_logger.add_meter("maxp", SmoothedValue(window_size=1, fmt="{value:.3f}"))
+        metric_logger.add_meter("ent", SmoothedValue(window_size=1, fmt="{value:.3f}"))
+        metric_logger.add_meter(
+            "dtime", SmoothedValue(window_size=1, fmt="{value:.3f}")
+        )
 
-        for itr, udata in enumerate(unsupervised_loader):
+        for step, udata in enumerate(
+            metric_logger.log_every(unsupervised_loader, print_freq, header)
+        ):
 
             def load_imgs():
                 imgs = [u.to(device, non_blocking=True) for u in udata]
                 return imgs
 
             imgs, dtime = gpu_timer(load_imgs)
-            data_meter.update(dtime)
+            metric_logger.update(dtime=dtime)
 
-            def train_step():
-                optimizer.zero_grad()
+            optimizer.zero_grad()
 
-                # --
-                # h: representations of 'imgs' before head
-                # z: representations of 'imgs' after head
-                # -- If use_pred_head=False, then encoder.pred (prediction
-                #    head) is None, and _forward_head just returns the
-                #    identity, z=h
-                h, z = encoder(imgs[1:], return_before_head=True, patch_drop=patch_drop)
-                with torch.no_grad():
-                    h, _ = target_encoder(imgs[0], return_before_head=True)
+            # --
+            # h: representations of 'imgs' before head
+            # z: representations of 'imgs' after head
+            # -- If use_pred_head=False, then encoder.pred (prediction
+            #    head) is None, and _forward_head just returns the
+            #    identity, z=h
+            h, z = encoder(imgs[1:], return_before_head=True, patch_drop=patch_drop)
+            with torch.no_grad():
+                h, _ = target_encoder(imgs[0], return_before_head=True)
 
-                # Step 1. convert representations to fp32
-                h, z = h.float(), z.float()
+            # Step 1. convert representations to fp32
+            h, z = h.float(), z.float()
 
-                # Step 2. determine anchor views/supports and their
-                #         corresponding target views/supports
-                anchor_views, target_views = z, h.detach()
-                T = next(sharpen_scheduler)
+            # Step 2. determine anchor views/supports and their
+            #         corresponding target views/supports
+            anchor_views, target_views = z, h.detach()
+            T = next(sharpen_scheduler)
 
-                # Step 3. compute msn loss with me-max regularization
-                (ploss, me_max, ent, logs, _) = msn(
-                    T=T,
-                    use_sinkhorn=use_sinkhorn,
-                    use_entropy=use_ent,
-                    anchor_views=anchor_views,
-                    target_views=target_views,
-                    proto_labels=proto_labels,
-                    prototypes=prototypes,
-                )
-                loss = ploss + memax_weight * me_max + ent_weight * ent
+            # Step 3. compute msn loss with me-max regularization
+            (ploss, me_max, ent, logs, _) = msn(
+                T=T,
+                use_sinkhorn=use_sinkhorn,
+                use_entropy=use_ent,
+                anchor_views=anchor_views,
+                target_views=target_views,
+                proto_labels=proto_labels,
+                prototypes=prototypes,
+            )
+            loss = ploss + memax_weight * me_max + ent_weight * ent
 
-                _new_lr = scheduler.step()
-                _new_wd = wd_scheduler.step()
-                # --
+            lr = scheduler.step()
+            wd = wd_scheduler.step()
 
-                # Step 4. Optimization step
-                loss.backward()
-                with torch.no_grad():
-                    prototypes.grad.data = AllReduceSum.apply(prototypes.grad.data)
-                grad_stats = grad_logger(encoder.named_parameters())
-                if clip_grad > 0:
-                    torch.nn.utils.clip_grad_norm_(encoder.parameters(), clip_grad)
-                optimizer.step()
+            # Step 4. Optimization step
+            loss.backward()
+            with torch.no_grad():
+                prototypes.grad.data = AllReduceSum.apply(prototypes.grad.data)
+            grad_stats = grad_logger(encoder.named_parameters())
+            if clip_grad > 0:
+                torch.nn.utils.clip_grad_norm_(encoder.parameters(), clip_grad)
+            optimizer.step()
 
-                # Step 5. momentum update of target encoder
-                with torch.no_grad():
-                    m = next(momentum_scheduler)
-                    for param_q, param_k in zip(
-                        encoder.parameters(), target_encoder.parameters()
-                    ):
-                        param_k.data.mul_(m).add_((1.0 - m) * param_q.detach().data)
+            # Step 5. momentum update of target encoder
+            with torch.no_grad():
+                m = next(momentum_scheduler)
+                for param_q, param_k in zip(
+                    encoder.parameters(), target_encoder.parameters()
+                ):
+                    param_k.data.mul_(m).add_((1.0 - m) * param_q.detach().data)
 
-                return (
-                    float(loss),
-                    float(ploss),
-                    float(me_max),
-                    float(ent),
-                    logs,
-                    _new_lr,
-                    _new_wd,
-                    grad_stats,
-                )
-
-            (
-                loss,
-                ploss,
-                rloss,
-                eloss,
-                _logs,
-                _new_lr,
-                _new_wd,
-                grad_stats,
-            ), etime = gpu_timer(train_step)
-            loss_meter.update(loss)
-            ploss_meter.update(ploss)
-            rloss_meter.update(rloss)
-            eloss_meter.update(eloss)
-            maxp_meter.update(_logs["max_t"])
-            np_meter.update(_logs["np"])
-
-            time_meter.update(etime)
+            metric_logger.update(loss=loss)
+            metric_logger.update(ploss=ploss)
+            metric_logger.update(me_max=me_max)
+            metric_logger.update(ent=ent)
+            metric_logger.update(maxp=logs["max_t"])
+            metric_logger.update(np=logs["np"])
 
             # -- save checkpoint
             if loss < min_loss:
@@ -407,46 +383,21 @@ def main(args):
                         os.unlink(p)
                     save_checkpoint(epoch)
 
-            # -- logging
-            def log_stats():
-                csv_logger.log(epoch + 1, itr, ploss, rloss, eloss, etime)
-                if (itr % log_freq == 0) or np.isnan(loss) or np.isinf(loss):
-                    logger.info(
-                        "[%d, %5d] loss: %.3f (%.3f %.3f %.3f) "
-                        "(np: %.1f, max-t: %.3f) "
-                        "[wd: %.2e] [lr: %.2e] "
-                        "[mem: %.2e] "
-                        "(%d ms; %d ms)",
-                        epoch + 1,
-                        itr,
-                        loss_meter.avg,
-                        ploss_meter.avg,
-                        rloss_meter.avg,
-                        eloss_meter.avg,
-                        np_meter.avg,
-                        maxp_meter.avg,
-                        _new_wd,
-                        _new_lr,
-                        torch.cuda.max_memory_allocated() / 1024.0**2,
-                        time_meter.avg,
-                        data_meter.avg,
-                    )
-
                     if grad_stats is not None:
                         logger.info(
                             "[%d, %5d] grad_stats: [%.2e %.2e] (%.2e, %.2e)",
                             epoch + 1,
-                            itr,
+                            step,
                             grad_stats.first_layer,
                             grad_stats.last_layer,
                             grad_stats.min,
                             grad_stats.max,
                         )
 
-            log_stats()
-            assert not np.isnan(loss), "loss is nan"
+            assert not np.isnan(loss.item()), "loss is nan"
 
-        logger.info("avg. loss %.3f", loss_meter.avg)
+        metric_logger.synchronize_between_processes()
+        logger.info("Averaged stats:", metric_logger)
 
 
 def load_checkpoint(device, r_path, prototypes, encoder, target_encoder, opt):
