@@ -42,7 +42,10 @@ def process_main(rank, fname, world_size, devices, port):
 
     import logging
 
-    logging.basicConfig()
+    logging.basicConfig(
+        format="%(asctime)s|%(levelname)s|%(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     logger = logging.getLogger()
     if rank == 0:
         logger.setLevel(logging.INFO)
